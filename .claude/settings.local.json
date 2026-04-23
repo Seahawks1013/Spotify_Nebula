@@ -1,7 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "PowerShell(& \"C:\\\\msys64\\\\ucrt64\\\\bin\\\\python.exe\" -m ensurepip --upgrade 2>&1)"
-    ]
-  }
-}
