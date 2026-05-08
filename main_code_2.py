@@ -1,5 +1,6 @@
 import csv
 import pygame
+import numpy as np
 from dataclasses import dataclass
 
 
@@ -184,17 +185,25 @@ def track_to_screen(track, w, h):
     return x, y
 
 
-def build_starfield(tracks, width=800, height=600):
-    # i render every track onto a surface once at startup instead of
-    # redrawing everything every frame. at 1M+ dots that would tank the fps.
-    # set_at() writes a single pixel which is way faster than draw.circle for this
-    surface = pygame.Surface((width, height))
-    surface.fill((5, 5, 15))  # deep space background
+def build_starfield(tracks, width, height):
+    # instead of calling set_at() once per track (which is slow at 1M+ songs),
+    # i build a numpy pixel array for the whole screen upfront and write all
+    # the colors into it at once. then i blit the whole array to the surface
+    # in one shot. this is way faster because numpy operates in bulk on the
+    # raw memory instead of going through pygames python layer for every pixel
+
+    # shape is (width, height, 3) because surfarray uses x,y order not row,col
+    pixels = np.full((width, height, 3), (5, 5, 15), dtype=np.uint8)
+
     for track in tracks.values():
         x, y = track_to_screen(track, width, height)
         if 0 <= x < width and 0 <= y < height:
-            color = valence_to_color(track.valence)
-            surface.set_at((x, y), color)
+            r, g, b = valence_to_color(track.valence)
+            pixels[x, y] = (r, g, b)  # numpy lets me write the whole rgb triplet at once
+
+    # create the surface and copy the pixel array into it
+    surface = pygame.Surface((width, height))
+    pygame.surfarray.blit_array(surface, pixels)
     return surface
 
 
