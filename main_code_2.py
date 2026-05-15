@@ -207,6 +207,73 @@ def build_starfield(tracks, width, height):
     return surface
 
 
+def draw_grid(surface, plot_w, plot_h, pad_l):
+    # puts faint lines over the plot so you can see where each spatial hash cell starts and ends
+    # color is super dark because i dont want it drowning out the stars
+    grid_color = (22, 28, 48)
+    cell_px_w  = plot_w / 20
+    cell_px_h  = plot_h / 20
+    for i in range(21):
+        sx = pad_l + int(i * cell_px_w)
+        pygame.draw.line(surface, grid_color, (sx, 0), (sx, plot_h), 1)
+        sy = int(i * cell_px_h)
+        pygame.draw.line(surface, grid_color, (pad_l, sy), (pad_l + plot_w, sy), 1)
+
+
+def draw_queried_cells(surface, cx, cy, plot_w, plot_h, pad_l):
+    # highlights the 9 cells the spatial hash actually checked so its obvious
+    # im only touching a tiny slice of the grid instead of scanning all 400 cells
+    cell_px_w = plot_w / 20
+    cell_px_h = plot_h / 20
+    tile = pygame.Surface((int(cell_px_w) + 1, int(cell_px_h) + 1), pygame.SRCALPHA)
+    tile.fill((0, 180, 200, 45))  # dim teal, semi-transparent
+    for dx in range(-1, 2):
+        for dy in range(-1, 2):
+            col = cx + dx
+            row = cy + dy
+            if 0 <= col < 20 and 0 <= row < 20:
+                sx = pad_l + int(col * cell_px_w)
+                # energy is flipped on screen just like everywhere else so i have to flip
+                # the row too — row 0 is at the bottom and row 19 is at the top
+                sy = int((19 - row) * cell_px_h)
+                surface.blit(tile, (sx, sy))
+
+
+def draw_song_panel(surface, font, neighbors, w):
+    # shows up to 10 songs near where i clicked in the top right corner
+    # each song gets two lines — name first then artist underneath in a dimmer color
+    if not neighbors:
+        return
+    total    = len(neighbors)
+    display  = neighbors[:10]
+    panel_w  = 270
+    panel_x  = w - panel_w - 8
+    panel_y  = 8
+    line_h   = 14
+    rows     = 1 + len(display) * 2 + (1 if total > 10 else 0)
+    panel_h  = rows * line_h + 10
+
+    # dark background behind the text so its actually readable against the stars
+    bg = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
+    bg.fill((8, 10, 24, 210))
+    surface.blit(bg, (panel_x, panel_y))
+
+    y = panel_y + 6
+    header = font.render(f"{total} songs nearby", True, (160, 170, 220))
+    surface.blit(header, (panel_x + 6, y))
+    y += line_h + 2
+
+    for t in display:
+        name_surf   = font.render(t.name[:36],    True, (220, 225, 255))
+        artist_surf = font.render(t.artists[:36], True, (110, 130, 175))
+        surface.blit(name_surf,   (panel_x + 6, y));  y += line_h
+        surface.blit(artist_surf, (panel_x + 6, y));  y += line_h
+
+    if total > 10:
+        note = font.render(f"... and {total - 10} more", True, (90, 100, 140))
+        surface.blit(note, (panel_x + 6, y))
+
+
 def draw_axes(surface, font, w, h, pad_l, pad_b):
     # i draw the axes on a separate surface so they sit on top of the starfield
     # pad_l is the left margin and pad_b is the bottom margin where the bars live
@@ -286,6 +353,7 @@ def main():
 
     selected_neighbors = []  # songs near the last click
     click_pos          = None  # where i clicked on screen
+    clicked_cell       = None  # grid cell (col, row) of the last click
 
     running = True
     while running:
@@ -303,12 +371,21 @@ def main():
                 dx = max(0.0, min(1.0, dx))  # clamp so i dont go out of bounds
                 dy = max(0.0, min(1.0, dy))
                 selected_neighbors = spatial.neighbors(dx, dy, radius=1)
-                click_pos = (mx, my)
+                click_pos          = (mx, my)
+                # store which cell was clicked so i can highlight the 9 queried cells
+                clicked_cell = (int(dx / spatial.cell_size), int(dy / spatial.cell_size))
 
         screen.fill((5, 5, 15))  # clear the whole window including margins
 
         # blit the starfield offset by PAD_L so it sits inside the axis margins
         screen.blit(starfield, (PAD_L, 0))
+
+        # overlay the grid so you can see where the spatial hash cells are
+        draw_grid(screen, plot_w, plot_h, PAD_L)
+
+        # light up the 3x3 block of cells the spatial hash just queried
+        if clicked_cell:
+            draw_queried_cells(screen, clicked_cell[0], clicked_cell[1], plot_w, plot_h, PAD_L)
 
         # highlight any songs near the click in yellow so they stand out
         for t in selected_neighbors:
@@ -319,12 +396,8 @@ def main():
         if click_pos:
             pygame.draw.circle(screen, (255, 255, 255), click_pos, 6, 1)
 
-        # show how many neighbors were found in the top left of the plot area
-        if selected_neighbors:
-            label = font.render(
-                f"{len(selected_neighbors)} neighbors found", True, (200, 200, 200)
-            )
-            screen.blit(label, (PAD_L + 6, 8))
+        # pull up the song panel instead of the old plain text count
+        draw_song_panel(screen, font, selected_neighbors, W)
 
         # draw the actual axis bars with ticks and numeric labels
         draw_axes(screen, font, W, H, PAD_L, PAD_B)
