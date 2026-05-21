@@ -152,8 +152,8 @@ def load_tracks(filepath, limit=None):
                     uri          = row["uri"],
                     # the column name for the song title isnt consistent across datasets
                     # so i check for both just in case
-                    name         = row.get("track_name", row.get("name", "Unknown")),
-                    artists      = row.get("artists", "Unknown"),
+                    name         = row.get("track_name", row.get("name", row["uri"].split(":")[-1])),
+                    artists      = row.get("artists", ""),
                     danceability = float(row["danceability"]),
                     energy       = float(row["energy"]),
                     popularity   = int(row["popularity"]),
@@ -264,14 +264,70 @@ def draw_song_panel(surface, font, neighbors, w):
     y += line_h + 2
 
     for t in display:
-        name_surf   = font.render(t.name[:36],    True, (220, 225, 255))
-        artist_surf = font.render(t.artists[:36], True, (110, 130, 175))
-        surface.blit(name_surf,   (panel_x + 6, y));  y += line_h
-        surface.blit(artist_surf, (panel_x + 6, y));  y += line_h
+        name_surf = font.render(t.name[:36], True, (220, 225, 255))
+        surface.blit(name_surf, (panel_x + 6, y));  y += line_h
+        if t.artists:
+            artist_surf = font.render(t.artists[:36], True, (110, 130, 175))
+            surface.blit(artist_surf, (panel_x + 6, y))
+            y += line_h
 
     if total > 10:
         note = font.render(f"... and {total - 10} more", True, (90, 100, 140))
         surface.blit(note, (panel_x + 6, y))
+
+
+def draw_hover_tooltip(surface, font, spatial, mx, my, plot_w, plot_h, pad_l, pad_b):
+    # every frame i convert the mouse position to data space and grab the
+    # nearest song — if one is close enough i show its name and artist
+    # near the cursor so it feels like hovering over a star
+    if mx < pad_l or mx > pad_l + plot_w:
+        return  # mouse is outside the plot area, dont show anything
+    if my < 0 or my > plot_h:
+        return
+
+    hx = (mx - pad_l) / plot_w
+    hy = 1 - my / plot_h
+    hx = max(0.0, min(1.0, hx))
+    hy = max(0.0, min(1.0, hy))
+
+    # radius=0 checks just the one cell the mouse is in
+    # i use 0 so it only shows songs right under the cursor, not a big area
+    candidates = spatial.neighbors(hx, hy, radius=0)
+    if not candidates:
+        return
+
+    # find the single closest song to the exact mouse position
+    def dist(t):
+        tx = t.danceability * plot_w + pad_l
+        ty = (1 - t.energy) * plot_h
+        return (tx - mx) ** 2 + (ty - my) ** 2
+
+    closest = min(candidates, key=dist)
+
+    # only show the tooltip if the song is within 10 pixels of the cursor
+    # otherwise it feels like the tooltip is floating in empty space
+    if dist(closest) > 10 ** 2:
+        return
+
+    # draw a small dark box with the song name and artist inside
+    name_surf   = font.render(closest.name[:40], True, (220, 225, 255))
+    artist_surf = font.render(closest.artists[:40], True, (110, 130, 175)) if closest.artists else None
+    tip_w = max(name_surf.get_width(), artist_surf.get_width() if artist_surf else 0) + 14
+    tip_h = name_surf.get_height() + (artist_surf.get_height() if artist_surf else 0) + 10
+
+    # nudge the tooltip so it doesnt cover the cursor
+    tx = mx + 12
+    ty = my - tip_h - 4
+    # clamp so it doesnt go off the right or top edge of the screen
+    tx = min(tx, surface.get_width()  - tip_w - 4)
+    ty = max(ty, 4)
+
+    bg = pygame.Surface((tip_w, tip_h), pygame.SRCALPHA)
+    bg.fill((8, 10, 24, 220))
+    surface.blit(bg, (tx, ty))
+    surface.blit(name_surf, (tx + 6, ty + 4))
+    if artist_surf:
+        surface.blit(artist_surf, (tx + 6, ty + 4 + name_surf.get_height()))
 
 
 def draw_axes(surface, font, w, h, pad_l, pad_b):
@@ -321,7 +377,7 @@ def main():
     # i added padding on the left and bottom to make room for the axis bars
     PAD_L = 45   # left margin for y axis labels
     PAD_B = 30   # bottom margin for x axis labels
-    W, H  = 860, 640  # slightly bigger window to fit the margins comfortably
+    W, H  = 1400, 900
 
     # load the full dataset, no limit this week
     print("Loading tracks...")
@@ -398,6 +454,9 @@ def main():
 
         # pull up the song panel instead of the old plain text count
         draw_song_panel(screen, font, selected_neighbors, W)
+
+        # hover tooltip — shows song name and artist when mouse is close to a star
+        draw_hover_tooltip(screen, font, spatial, mx, my, plot_w, plot_h, PAD_L, PAD_B)
 
         # draw the actual axis bars with ticks and numeric labels
         draw_axes(screen, font, W, H, PAD_L, PAD_B)
