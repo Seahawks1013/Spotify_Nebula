@@ -1,7 +1,17 @@
 import csv
 import pygame
 import numpy as np
+import tkinter as tk
 from dataclasses import dataclass
+
+
+def copy_to_clipboard(text):
+    root = tk.Tk()
+    root.withdraw()
+    root.clipboard_clear()
+    root.clipboard_append(text)
+    root.update()
+    root.destroy()
 
 
 # I built a custom hash table instead of using a python dict because the project
@@ -239,40 +249,61 @@ def draw_queried_cells(surface, cx, cy, plot_w, plot_h, pad_l):
                 surface.blit(tile, (sx, sy))
 
 
-def draw_song_panel(surface, font, neighbors, w):
-    # shows up to 10 songs near where i clicked in the top right corner
-    # each song gets two lines — name first then artist underneath in a dimmer color
+PANEL_W = 270
+PANEL_X_OFFSET = 8
+PANEL_Y = 8
+PANEL_LINE_H = 14
+
+
+def panel_header_rect(w):
+    panel_x = w - PANEL_W - PANEL_X_OFFSET
+    return pygame.Rect(panel_x, PANEL_Y, PANEL_W, PANEL_LINE_H + 10)
+
+
+def draw_song_panel(surface, font, font_large, neighbors, w, collapsed, hit_areas):
+    hit_areas.clear()
     if not neighbors:
         return
-    total    = len(neighbors)
-    display  = neighbors[:10]
-    panel_w  = 270
-    panel_x  = w - panel_w - 8
-    panel_y  = 8
-    line_h   = 14
-    rows     = 1 + len(display) * 2 + (1 if total > 10 else 0)
-    panel_h  = rows * line_h + 10
+    total   = len(neighbors)
+    panel_x = w - PANEL_W - PANEL_X_OFFSET
+    line_h  = PANEL_LINE_H
 
-    # dark background behind the text so its actually readable against the stars
-    bg = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
+    arrow = "▶" if collapsed else "▼"
+    header_text = f"{arrow}  {total} songs nearby"
+
+    if collapsed:
+        panel_h = line_h + 10
+        bg = pygame.Surface((PANEL_W, panel_h), pygame.SRCALPHA)
+        bg.fill((8, 10, 24, 210))
+        surface.blit(bg, (panel_x, PANEL_Y))
+        header = font_large.render(header_text, True, (210, 215, 255))
+        surface.blit(header, (panel_x + 6, PANEL_Y + 6))
+        return
+
+    display = neighbors[:10]
+    rows    = 1 + len(display) * 2 + (1 if total > 10 else 0)
+    panel_h = rows * line_h + 10
+
+    bg = pygame.Surface((PANEL_W, panel_h), pygame.SRCALPHA)
     bg.fill((8, 10, 24, 210))
-    surface.blit(bg, (panel_x, panel_y))
+    surface.blit(bg, (panel_x, PANEL_Y))
 
-    y = panel_y + 6
-    header = font.render(f"{total} songs nearby", True, (160, 170, 220))
+    y = PANEL_Y + 6
+    header = font_large.render(header_text, True, (210, 215, 255))
     surface.blit(header, (panel_x + 6, y))
     y += line_h + 2
 
     for t in display:
-        name_surf = font.render(t.name[:36], True, (220, 225, 255))
+        hit_areas.append((pygame.Rect(panel_x, y, PANEL_W, line_h), t.uri))
+        name_surf = font.render(t.name[:36], True, (240, 242, 255))
         surface.blit(name_surf, (panel_x + 6, y));  y += line_h
         if t.artists:
-            artist_surf = font.render(t.artists[:36], True, (110, 130, 175))
+            artist_surf = font.render(t.artists[:36], True, (170, 185, 225))
             surface.blit(artist_surf, (panel_x + 6, y))
             y += line_h
 
     if total > 10:
-        note = font.render(f"... and {total - 10} more", True, (90, 100, 140))
+        note = font.render(f"... and {total - 10} more", True, (160, 170, 210))
         surface.blit(note, (panel_x + 6, y))
 
 
@@ -334,9 +365,9 @@ def draw_axes(surface, font, w, h, pad_l, pad_b):
     # i draw the axes on a separate surface so they sit on top of the starfield
     # pad_l is the left margin and pad_b is the bottom margin where the bars live
 
-    ax_color    = (60, 60, 80)    # dim so it doesnt compete with the stars
-    tick_color  = (90, 90, 110)
-    label_color = (130, 130, 160)
+    ax_color    = (100, 100, 130)
+    tick_color  = (150, 150, 180)
+    label_color = (210, 215, 255)
 
     plot_w = w - pad_l          # width of the actual plot area
     plot_h = h - pad_b          # height of the actual plot area
@@ -377,7 +408,7 @@ def main():
     # i added padding on the left and bottom to make room for the axis bars
     PAD_L = 45   # left margin for y axis labels
     PAD_B = 30   # bottom margin for x axis labels
-    W, H  = 1400, 900
+    W, H  = 1100, 720
 
     # load the full dataset, no limit this week
     print("Loading tracks...")
@@ -392,9 +423,10 @@ def main():
     print("Spatial hash ready.")
 
     pygame.init()
-    screen = pygame.display.set_mode((W, H))
+    screen = pygame.display.set_mode((W, H), pygame.RESIZABLE)
     pygame.display.set_caption("Spotify Nebula")
-    font  = pygame.font.SysFont("monospace", 11)
+    font       = pygame.font.SysFont("monospace", 11)
+    font_large = pygame.font.SysFont("monospace", 16)
     clock = pygame.time.Clock()
 
     # the plot area is the window minus the axis margins
@@ -410,6 +442,9 @@ def main():
     selected_neighbors = []  # songs near the last click
     click_pos          = None  # where i clicked on screen
     clicked_cell       = None  # grid cell (col, row) of the last click
+    panel_collapsed    = False
+    panel_hit_areas    = []   # (Rect, uri) for each visible panel row
+    copied_flash_until = 0    # timestamp to stop showing "Copied!" toast
 
     running = True
     while running:
@@ -419,17 +454,38 @@ def main():
             if event.type == pygame.QUIT:
                 running = False
 
+            elif event.type == pygame.WINDOWRESIZED:
+                W, H   = screen.get_size()
+                plot_w = W - PAD_L
+                plot_h = H - PAD_B
+                starfield = build_starfield(tracks, plot_w, plot_h)
+                selected_neighbors = []
+                click_pos          = None
+                clicked_cell       = None
+
+            elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                selected_neighbors = []
+                click_pos          = None
+                clicked_cell       = None
+
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                # convert the click from screen pixels back into data space (0.0 to 1.0)
-                # i have to subtract PAD_L first because the plot doesnt start at x=0 anymore
-                dx = (mx - PAD_L) / plot_w
-                dy = 1 - my / plot_h
-                dx = max(0.0, min(1.0, dx))  # clamp so i dont go out of bounds
-                dy = max(0.0, min(1.0, dy))
-                selected_neighbors = spatial.neighbors(dx, dy, radius=1)
-                click_pos          = (mx, my)
-                # store which cell was clicked so i can highlight the 9 queried cells
-                clicked_cell = (int(dx / spatial.cell_size), int(dy / spatial.cell_size))
+                alt_held = pygame.key.get_mods() & pygame.KMOD_ALT
+                if alt_held:
+                    for rect, uri in panel_hit_areas:
+                        if rect.collidepoint(mx, my):
+                            copy_to_clipboard(uri)
+                            copied_flash_until = pygame.time.get_ticks() + 1500
+                            break
+                elif selected_neighbors and panel_header_rect(W).collidepoint(mx, my):
+                    panel_collapsed = not panel_collapsed
+                else:
+                    dx = (mx - PAD_L) / plot_w
+                    dy = 1 - my / plot_h
+                    dx = max(0.0, min(1.0, dx))
+                    dy = max(0.0, min(1.0, dy))
+                    selected_neighbors = spatial.neighbors(dx, dy, radius=1)
+                    click_pos          = (mx, my)
+                    clicked_cell = (int(dx / spatial.cell_size), int(dy / spatial.cell_size))
 
         screen.fill((5, 5, 15))  # clear the whole window including margins
 
@@ -450,10 +506,14 @@ def main():
 
         # small white ring to show where i clicked
         if click_pos:
-            pygame.draw.circle(screen, (255, 255, 255), click_pos, 6, 1)
+            pygame.draw.circle(screen, (220, 50, 50), click_pos, 6, 1)
 
         # pull up the song panel instead of the old plain text count
-        draw_song_panel(screen, font, selected_neighbors, W)
+        draw_song_panel(screen, font, font_large, selected_neighbors, W, panel_collapsed, panel_hit_areas)
+
+        if pygame.time.get_ticks() < copied_flash_until:
+            toast = font_large.render("Copied!", True, (100, 255, 140))
+            screen.blit(toast, (W - PANEL_W - PANEL_X_OFFSET, PANEL_Y + PANEL_LINE_H + 14))
 
         # hover tooltip — shows song name and artist when mouse is close to a star
         draw_hover_tooltip(screen, font, spatial, mx, my, plot_w, plot_h, PAD_L, PAD_B)
