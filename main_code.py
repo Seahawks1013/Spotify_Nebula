@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 
 
-#this is the blueprint for a song. this 
+#this is the blueprint for a song.
 @dataclass
 class Track:
     uri: str
@@ -39,6 +39,8 @@ def load_tracks(filepath, limit=None):
             except (KeyError, ValueError): #handles bad data in teh event of invalid number or missing column 
                 continue
     return tracks
+
+
 
 
 def main():
