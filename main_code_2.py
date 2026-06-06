@@ -27,16 +27,17 @@ class HashTable:
         # i added a separate path for tuple keys because SpatialHash uses (col, row)
         # as keys instead of strings. without this the string conversion would have
         # been really slow and caused a lot of collisions
-        if isinstance(key, tuple):
+        if isinstance(key, tuple): #essentially a different hash function used to get the location of the cell in the spatial hash
             h = 0
             for part in key:
                 h = (h * 31 + hash(part)) % self._capacity
             return h
+        
 
         # for string keys like track uris i use a prime-31 polynomial roll
         # multiplying by 31 at each step spreads the keys out more evenly
         h = 0
-        for ch in str(key):
+        for ch in str(key): #for converting to bucket number
             h = (h * 31 + ord(ch)) % self._capacity
         return h
 
@@ -95,7 +96,7 @@ class HashTable:
 # this is the spatial hash, which is the main thing i added this week
 # the idea is to divide the danceability/energy space into a grid of cells
 # and bucket each song into whichever cell it falls in. when i click somewhere
-# i only need to check nearby cells instead of comparing against all 1.2M songs
+# i only need to check nearby cells instead of comparing against all 2.2M songs
 class SpatialHash:
     def __init__(self, cell_size=0.05):
         self.cell_size = cell_size
@@ -121,7 +122,7 @@ class SpatialHash:
 
     def neighbors(self, x, y, radius=1):
         # this is the whole reason i built the spatial hash
-        # instead of looping through all 1.2M songs to find nearby ones,
+        # instead of looping through all songs to find nearby ones,
         # i only check the cells within `radius` steps of the clicked cell
         # with radius=1 thats at most 9 cells, so its O(k) not O(n)
         cx, cy = self._cell(x, y)
@@ -136,6 +137,7 @@ class SpatialHash:
 
 # blueprint for a single spotify track
 # i added name and artists this week so i can display song info on click later
+#including all information from the dataset in case i want to use it for more features later on
 @dataclass
 class Track:
     uri: str
@@ -148,10 +150,11 @@ class Track:
     valence: float
 
 
+#opens the CSV, reads every row. creates a track object for each one
 def load_tracks(filepath, limit=None):
-    # i set a large capacity here because the full dataset is about 1.2M songs
-    # and i dont want the hash table to degrade from too many collisions
-    tracks = HashTable(capacity=131072)
+    # i set a large capacity here because the full dataset is about 2.2M songs
+    # and i dont want the hash table to degrade from too many collisions - keeps it closer to O(1) for lookups
+    tracks = HashTable(capacity=419430)
     with open(filepath, newline="", encoding="utf-8") as f:  # auto closes when done
         reader = csv.DictReader(f)
         for row in reader:
@@ -295,7 +298,7 @@ def draw_song_panel(surface, font, font_large, neighbors, w, collapsed, hit_area
 
     for t in display:
         hit_areas.append((pygame.Rect(panel_x, y, PANEL_W, line_h), t.uri))
-        name_surf = font.render(t.name[:36], True, (240, 242, 255))
+        name_surf = font.render(t.name[:36], True, (240, 242, 255)) #shows up in panel
         surface.blit(name_surf, (panel_x + 6, y));  y += line_h
         if t.artists:
             artist_surf = font.render(t.artists[:36], True, (170, 185, 225))
@@ -483,6 +486,7 @@ def main():
                     dy = 1 - my / plot_h
                     dx = max(0.0, min(1.0, dx))
                     dy = max(0.0, min(1.0, dy))
+                    #asks spatial hash for neighbors 
                     selected_neighbors = spatial.neighbors(dx, dy, radius=1)
                     click_pos          = (mx, my)
                     clicked_cell = (int(dx / spatial.cell_size), int(dy / spatial.cell_size))
